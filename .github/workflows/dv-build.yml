@@ -3,6 +3,11 @@ name: Build DV APK
 on:
     workflow_dispatch:
         inputs:
+            dev_suffix:
+                description: "使用 dev 后缀（包名 com.example.piliplus.dev，可与官方版共存）"
+                required: false
+                default: false
+                type: boolean
             tag:
                 description: "tag"
                 required: false
@@ -47,7 +52,12 @@ jobs:
               shell: pwsh
               run: lib/scripts/build.ps1 android
 
+            - name: Flutter Build Release Apk (dev 共存版)
+              if: ${{ github.event.inputs.dev_suffix == 'true' }}
+              run: flutter build apk --release --split-per-abi --dart-define-from-file=pili_release.json --no-pub --android-project-arg dev=1
+
             - name: Flutter Build Release Apk
+              if: ${{ github.event.inputs.dev_suffix != 'true' }}
               run: flutter build apk --release --split-per-abi --dart-define-from-file=pili_release.json --no-pub
 
             - name: Rename
