@@ -736,6 +736,7 @@ class VideoDetailController extends GetxController
           : NetworkSource(
               videoSource: videoUrl!,
               audioSource: audioUrl,
+              qualityCode: currentVideoQa.value?.code,
             ),
       seekTo: seek,
       duration: data.timeLength == null
@@ -966,7 +967,25 @@ class VideoDetailController extends GetxController
       AudioItem? firstAudio;
       final audioList = data.dash?.audio;
       if (audioList != null && audioList.isNotEmpty) {
-        final audioIds = audioList.map((map) => map.id).toList();
+        // 原生 HDR 后端对高码率/Dolby 音轨兼容性差，改用兼容音轨
+        final useAndroidHdrAudioCompat =
+            plPlayerController.shouldUseAndroidHdrForCurrentSource(
+              currentVideoQa.value?.code,
+            );
+        final effectiveAudioList = useAndroidHdrAudioCompat
+            ? audioList
+                  .where(
+                    (item) =>
+                        item.id != AudioQuality.hiRes.code &&
+                        item.id != AudioQuality.dolby_30250.code &&
+                        item.id != AudioQuality.dolby_30255.code,
+                  )
+                  .toList()
+            : audioList;
+        final List<int> audioIds =
+            (effectiveAudioList.isEmpty ? audioList : effectiveAudioList)
+                .map((map) => map.id)
+                .toList();
         int closestNumber = audioIds.findClosestTarget(
           (e) => e <= plPlayerController.cacheAudioQa,
           (a, b) => a > b ? a : b,
@@ -975,10 +994,14 @@ class VideoDetailController extends GetxController
             audioIds.any((e) => e > plPlayerController.cacheAudioQa)) {
           closestNumber = AudioQuality.k192.code;
         }
-        firstAudio = audioList.firstWhere(
-          (e) => e.id == closestNumber,
-          orElse: () => audioList.first,
-        );
+        firstAudio =
+            (effectiveAudioList.isEmpty ? audioList : effectiveAudioList)
+                .firstWhere(
+                  (e) => e.id == closestNumber,
+                  orElse: () => effectiveAudioList.isEmpty
+                      ? audioList.first
+                      : effectiveAudioList.first,
+                );
         audioUrl = VideoUtils.getCdnUrl(firstAudio.playUrls, isAudio: true);
         currentAudioQa = AudioQuality.fromCode(firstAudio.id);
       } else {
@@ -1041,7 +1064,8 @@ class VideoDetailController extends GetxController
   // 设定字幕轨道
   Future<void> setSubtitle(int index) async {
     if (index <= 0) {
-      await plPlayerController.videoPlayerController?.setSubtitleTrack(.no());
+      await plPlayerController.setSubtitleTrack(SubtitleTrack.no());
+      plPlayerController.setExternalSubtitleData(null);
       vttSubtitlesIndex.value = index;
       return;
     }
@@ -1053,9 +1077,10 @@ class VideoDetailController extends GetxController
       if (subtitle.isData) {
         subUri = 'memory://$subUri';
       }
-      await plPlayerController.videoPlayerController?.setSubtitleTrack(
+      await plPlayerController.setSubtitleTrack(
         SubtitleTrack(subUri, sub.lanDoc, sub.lan, uri: true),
       );
+      plPlayerController.setExternalSubtitleData(subtitle.id);
       vttSubtitlesIndex.value = index;
     }
 
