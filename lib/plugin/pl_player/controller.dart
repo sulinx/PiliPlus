@@ -803,11 +803,6 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   /// 当前画质码：杜比视界 126 / HDR Vivid 129 / HDR 真彩 125
   int? get currentQualityCode => _sourceQualityCode ?? cacheVideoQa;
 
-  bool get _isHdrQuality {
-    final quality = currentQualityCode;
-    return quality != null && _hdrQualityCodes.contains(quality);
-  }
-
   /// 下列能力只有 mpv 支持，开启时不得使用原生后端
   bool get _requiresMpvOnlyFeature =>
       flipX.value ||
@@ -825,16 +820,17 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         !_requiresMpvOnlyFeature;
   }
 
-  /// HDR 画质默认走原生后端；「强制 HDR」开启时不再探测屏幕能力
-  Future<bool> _shouldUseAndroidHdrBackend() async {
-    if (!shouldUseAndroidHdrForCurrentSource()) {
+  /// 原生后端是否会实际接管该画质（含设备能力探测）：
+  /// HDR 画质默认走原生后端；「强制 HDR」开启时不再探测屏幕能力。
+  Future<bool> willUseAndroidHdrBackend([int? qualityCode]) async {
+    if (!shouldUseAndroidHdrForCurrentSource(qualityCode)) {
       return false;
     }
     if (Pref.androidHdrPlayback) {
       return true;
     }
     return AndroidHdrPlaybackBackend.supportsHdr(
-      qualityCode: currentQualityCode,
+      qualityCode: qualityCode ?? currentQualityCode,
     );
   }
 
@@ -844,7 +840,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     Volume? volume,
     Duration? duration,
   ) async {
-    if (await _shouldUseAndroidHdrBackend()) {
+    if (await willUseAndroidHdrBackend()) {
       try {
         await _createAndroidHdrBackend(dataSource, seekTo, duration);
         return;
