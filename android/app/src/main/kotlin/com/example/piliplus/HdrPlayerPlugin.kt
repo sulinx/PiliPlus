@@ -289,7 +289,7 @@ private class HdrPlayerSession(
         val headers = call.argument<Map<String, String>>("headers") ?: emptyMap()
         setFitMode(call.argument<String>("fitMode") ?: "contain")
         Log.i(
-            TAG,
+            HdrPlayerPlugin.TAG,
             "[DV] open session=$sessionId fileSource=$isFileSource " +
                 "audio=${!audioUrl.isNullOrEmpty()} startMs=$startMs " +
                 "videoHost=${videoUrl.substringAfter("://").substringBefore("/")}",
@@ -424,7 +424,7 @@ private class HdrPlayerSession(
                 }
                 .firstOrNull()
             Log.i(
-                TAG,
+                HdrPlayerPlugin.TAG,
                 "[DV] 选中流 video=${videoFormat?.sampleMimeType} codecs=${videoFormat?.codecs} " +
                     "size=${videoFormat?.width}x${videoFormat?.height} " +
                     "color=${videoFormat?.colorInfo} " +
@@ -432,14 +432,14 @@ private class HdrPlayerSession(
                     "audio=${audioFormat?.sampleMimeType}/${audioFormat?.codecs}",
             )
         } catch (t: Throwable) {
-            Log.w(TAG, "[DV] logSelectedFormats 失败", t)
+            Log.w(HdrPlayerPlugin.TAG, "[DV] logSelectedFormats 失败", t)
         }
     }
 
     override fun onPlayerError(error: PlaybackException) {
         val exoError = error as? ExoPlaybackException
         Log.e(
-            TAG,
+            HdrPlayerPlugin.TAG,
             "[DV] onPlayerError code=${error.errorCodeName} renderer=${exoError?.rendererName} " +
                 "fmt=${exoError?.rendererFormat}",
             error,
