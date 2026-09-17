@@ -9,6 +9,7 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Display
 import android.view.PixelCopy
 import android.view.SurfaceView
@@ -64,6 +65,7 @@ class HdrPlayerPlugin private constructor(
                 "create" -> {
                     val id = nextSessionId++
                     sessions[id] = HdrPlayerSession(activity, id, ::sendEvent)
+                    Log.i(TAG, "[DV] create session id=$id (Media3/ExoPlayer 原生后端)")
                     result.success(id)
                 }
 
@@ -124,6 +126,7 @@ class HdrPlayerPlugin private constructor(
                 else -> result.notImplemented()
             }
         } catch (e: Throwable) {
+            Log.e(TAG, "[DV] channel ${call.method} failed: ${e.message}", e)
             result.error("hdr_player_error", e.message, null)
         }
     }
@@ -186,6 +189,7 @@ class HdrPlayerPlugin private constructor(
                 ActivityInfo.COLOR_MODE_DEFAULT
             }
             activity.window.attributes = params
+            Log.i(TAG, "[DV] 请求窗口 colorMode=${if (enabled) "HDR" else "DEFAULT"}")
         }
     }
 
@@ -199,7 +203,7 @@ class HdrPlayerPlugin private constructor(
                     .getDisplay(Display.DEFAULT_DISPLAY)
             }
             val types = display?.hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
-            when (qualityCode) {
+            val supported = when (qualityCode) {
                 125 -> types.contains(Display.HdrCapabilities.HDR_TYPE_HDR10)
                 // Some devices do not advertise Dolby Vision but can still show a
                 // Dolby Vision source through an HDR10-compatible output path.
@@ -207,12 +211,22 @@ class HdrPlayerPlugin private constructor(
                 129 -> types.isNotEmpty()
                 else -> types.isNotEmpty()
             }
-        } catch (_: Throwable) {
+            Log.i(
+                TAG,
+                "[DV] supportsHdr qn=$qualityCode hdrTypes=[${types.joinToString(",")}] " +
+                    "(dv=${types.contains(Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION)} " +
+                    "hdr10=${types.contains(Display.HdrCapabilities.HDR_TYPE_HDR10)} " +
+                    "hlg=${types.contains(Display.HdrCapabilities.HDR_TYPE_HLG)}) -> $supported",
+            )
+            supported
+        } catch (t: Throwable) {
+            Log.w(TAG, "[DV] supportsHdr qn=$qualityCode 探测异常", t)
             false
         }
     }
 
     companion object {
+        const val TAG = "PiliPlusHdr"
         const val CHANNEL = "PiliPlus/HdrPlayer"
         const val EVENTS = "PiliPlus/HdrPlayer/events"
         const val VIEW_TYPE = "com.example.piliplus/hdr_player_view"
@@ -274,6 +288,12 @@ private class HdrPlayerSession(
         val startMs = call.argument<Number>("startMs")?.toLong() ?: 0L
         val headers = call.argument<Map<String, String>>("headers") ?: emptyMap()
         setFitMode(call.argument<String>("fitMode") ?: "contain")
+        Log.i(
+            TAG,
+            "[DV] open session=$sessionId fileSource=$isFileSource " +
+                "audio=${!audioUrl.isNullOrEmpty()} startMs=$startMs " +
+                "videoHost=${videoUrl.substringAfter("://").substringBefore("/")}",
+        )
         player.setMediaSource(buildMediaSource(videoUrl, audioUrl, isFileSource, headers))
         player.prepare()
         if (startMs > 0L) {
@@ -354,6 +374,7 @@ private class HdrPlayerSession(
     override fun onPlaybackStateChanged(playbackState: Int) {
         when (playbackState) {
             Player.STATE_READY -> {
+                logSelectedFormats()
                 sendTimeline()
                 sendEvent(sessionId, "ready", emptyMap())
                 sendEvent(sessionId, "buffering", mapOf("value" to false))
@@ -386,8 +407,43 @@ private class HdrPlayerSession(
         stopProgress()
     }
 
+    /**
+     * 记录 Media3 实际选中的编解码器 —— 杜比视界应为 video/dolby-vision，
+     * codecs 形如 dvh1.05.06 / dvhe.08.06。
+     */
+    private fun logSelectedFormats() {
+        try {
+            val videoFormat = player.videoFormat
+            val audioFormat = player.audioFormat
+            val selectedTrack = player.currentTracks.groups
+                .filter { it.type == C.TRACK_TYPE_VIDEO }
+                .flatMap { group ->
+                    (0 until group.length)
+                        .filter { group.isTrackSelected(it) }
+                        .map { group.getTrackFormat(it) }
+                }
+                .firstOrNull()
+            Log.i(
+                TAG,
+                "[DV] 选中流 video=${videoFormat?.sampleMimeType} codecs=${videoFormat?.codecs} " +
+                    "size=${videoFormat?.width}x${videoFormat?.height} " +
+                    "color=${videoFormat?.colorInfo} " +
+                    "track=${selectedTrack?.sampleMimeType}/${selectedTrack?.codecs} " +
+                    "audio=${audioFormat?.sampleMimeType}/${audioFormat?.codecs}",
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "[DV] logSelectedFormats 失败", t)
+        }
+    }
+
     override fun onPlayerError(error: PlaybackException) {
         val exoError = error as? ExoPlaybackException
+        Log.e(
+            TAG,
+            "[DV] onPlayerError code=${error.errorCodeName} renderer=${exoError?.rendererName} " +
+                "fmt=${exoError?.rendererFormat}",
+            error,
+        )
         sendEvent(
             sessionId,
             "error",

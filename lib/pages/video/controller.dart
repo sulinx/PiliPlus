@@ -934,6 +934,10 @@ class VideoDetailController extends GetxController
       final cacheVideoQa = plPlayerController.cacheVideoQa!;
       final targetVideoQa = data.findAvailableVideoQuality(cacheVideoQa);
       currentVideoQa.value = VideoQuality.fromCode(targetVideoQa);
+      dvLog(
+        '画质选定 qn=$targetVideoQa ($targetVideoQa) cache=$cacheVideoQa '
+        '| 可选项=${data.supportFormats?.map((e) => e.quality).toList()}',
+      );
 
       /// 优先顺序 设置中指定解码格式 -> 当前可选的首个解码格式
       final supportFormats = data.supportFormats!;

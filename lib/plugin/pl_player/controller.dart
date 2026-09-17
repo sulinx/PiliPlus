@@ -51,7 +51,7 @@ import 'package:PiliPlus/utils/utils.dart';
 import 'package:archive/archive.dart' show getCrc32;
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:easy_debounce/easy_throttle.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:flutter/services.dart' show HapticFeedback, DeviceOrientation;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:flutter_volume_controller/flutter_volume_controller.dart';
@@ -67,6 +67,11 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
 typedef PlayCallback = Future<void>? Function();
+
+/// 杜比视界 / HDR 播放链路诊断日志。
+/// 注意：**不要**用 kDebugMode 包起来 —— release 包（也就是实机安装的那个）
+/// 必须能在 `adb logcat -s PiliPlusHdr flutter` 里看到决策过程。
+void dvLog(String message) => debugPrint('[DV] $message');
 
 class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   Player? _videoPlayerController;
@@ -823,15 +828,25 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   /// 原生后端是否会实际接管该画质（含设备能力探测）：
   /// HDR 画质默认走原生后端；「强制 HDR」开启时不再探测屏幕能力。
   Future<bool> willUseAndroidHdrBackend([int? qualityCode]) async {
+    final targetQuality = qualityCode ?? currentQualityCode;
     if (!shouldUseAndroidHdrForCurrentSource(qualityCode)) {
+      dvLog(
+        'skip native: qn=$targetQuality '
+        'isHdrQn=${_hdrQualityCodes.contains(targetQuality)} '
+        'android=${Platform.isAndroid} live=$isLive '
+        'mpvOnlyFeature=$_requiresMpvOnlyFeature',
+      );
       return false;
     }
     if (Pref.androidHdrPlayback) {
+      dvLog('use native: qn=$targetQuality (强制 HDR 开关已开)');
       return true;
     }
-    return AndroidHdrPlaybackBackend.supportsHdr(
-      qualityCode: qualityCode ?? currentQualityCode,
+    final supported = await AndroidHdrPlaybackBackend.supportsHdr(
+      qualityCode: targetQuality,
     );
+    dvLog('probe native: qn=$targetQuality supportsHdr=$supported');
+    return supported;
   }
 
   Future<void> _createPlaybackBackend(
@@ -843,14 +858,15 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     if (await willUseAndroidHdrBackend()) {
       try {
         await _createAndroidHdrBackend(dataSource, seekTo, duration);
+        dvLog('backend = Media3 原生后端');
         return;
       } catch (err, stackTrace) {
-        if (kDebugMode) {
-          debugPrint('Android HDR backend failed: $err\n$stackTrace');
-        }
+        dvLog('backend = Media3 原生后端创建失败，回退 mpv: $err\n$stackTrace');
         await _disposeAndroidHdrBackend();
         SmartDialog.showToast('已使用兼容播放');
       }
+    } else {
+      dvLog('backend = mpv (media_kit)');
     }
     await _createVideoController(dataSource, seekTo, volume);
   }

@@ -6,7 +6,7 @@ import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 import 'package:PiliPlus/plugin/pl_player/models/playback_backend.dart';
 import 'package:PiliPlus/plugin/pl_player/models/video_fit_type.dart';
-import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter/foundation.dart' show Factory, debugPrint;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -309,11 +309,13 @@ class AndroidHdrPlaybackBackend extends PlaybackBackend {
   static Future<bool> supportsHdr({int? qualityCode}) async {
     if (!Platform.isAndroid) return false;
     try {
-      return await _channel.invokeMethod<bool>('supportsHdr', {
-            'qualityCode': qualityCode,
-          }) ??
-          false;
-    } catch (_) {
+      final supported = await _channel.invokeMethod<bool>('supportsHdr', {
+        'qualityCode': qualityCode,
+      });
+      debugPrint('[DV] 通道 supportsHdr(qn=$qualityCode) = $supported');
+      return supported ?? false;
+    } catch (err) {
+      debugPrint('[DV] 通道 supportsHdr(qn=$qualityCode) 异常: $err');
       return false;
     }
   }
