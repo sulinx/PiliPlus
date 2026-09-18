@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
+import android.media.MediaCodecList
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -193,7 +194,8 @@ class HdrPlayerPlugin private constructor(
         }
     }
 
-    private fun supportsHdr(context: Context, qualityCode: Int?): Boolean {
+    /** 屏幕（HDMI sink）申报的 HDR 类型；Amlogic 盒子经常返回空数组 */
+    private fun displayHdrTypes(context: Context): IntArray {
         return try {
             val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 context.display
@@ -202,27 +204,56 @@ class HdrPlayerPlugin private constructor(
                 (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
                     .getDisplay(Display.DEFAULT_DISPLAY)
             }
-            val types = display?.hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
-            val supported = when (qualityCode) {
-                125 -> types.contains(Display.HdrCapabilities.HDR_TYPE_HDR10)
-                // Some devices do not advertise Dolby Vision but can still show a
-                // Dolby Vision source through an HDR10-compatible output path.
-                126 -> types.isNotEmpty()
-                129 -> types.isNotEmpty()
-                else -> types.isNotEmpty()
-            }
-            Log.i(
-                TAG,
-                "[DV] supportsHdr qn=$qualityCode hdrTypes=[${types.joinToString(",")}] " +
-                    "(dv=${types.contains(Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION)} " +
-                    "hdr10=${types.contains(Display.HdrCapabilities.HDR_TYPE_HDR10)} " +
-                    "hlg=${types.contains(Display.HdrCapabilities.HDR_TYPE_HLG)}) -> $supported",
-            )
-            supported
+            display?.hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
         } catch (t: Throwable) {
-            Log.w(TAG, "[DV] supportsHdr qn=$qualityCode 探测异常", t)
-            false
+            Log.w(TAG, "[DV] 读取屏幕 HDR 能力失败", t)
+            intArrayOf()
         }
+    }
+
+    /** 返回支持该 mime 的非编码器名字，没有则 null */
+    private fun findDecoder(mime: String): String? {
+        return try {
+            MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.firstOrNull { info ->
+                !info.isEncoder &&
+                    info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+            }?.name
+        } catch (t: Throwable) {
+            Log.w(TAG, "[DV] MediaCodecList 查询 $mime 失败", t)
+            null
+        }
+    }
+
+    /**
+     * 判断该画质是否值得走原生（Media3）后端。
+     *
+     * 判据有两条，取「或」：
+     *  1. 屏幕申报 HDR 能力（Display.hdrCapabilities）；
+     *  2. **设备存在对应硬解器**（video/dolby-vision / video/hevc）。
+     *
+     * 为什么必须有第 2 条：本机 Amlogic 极光盒子 5X（tyson/BA001）的
+     * HdrCapabilities 恒为 `[]`（实测 dumpsys display 同为空），但
+     * /vendor/etc/media_codecs.xml 里有 6 个 `video/dolby-vision` 硬解器
+     * （OMX.amlogic.dolby-vision.dvhe/dvav/dav1...）。只看屏幕能力会永远判 false
+     * → 永远回退 mpv → mpv 的 mediacodec 在 DV 上打不开（"Could not open codec"）
+     * → 软解 → 偏色。blbl 的做法正是「不预判，直接试、失败再退」。
+     */
+    private fun supportsHdr(context: Context, qualityCode: Int?): Boolean {
+        val types = displayHdrTypes(context)
+        val dvDecoder = findDecoder("video/dolby-vision")
+        val hevcDecoder = findDecoder("video/hevc")
+        val supported = when (qualityCode) {
+            125 -> types.contains(Display.HdrCapabilities.HDR_TYPE_HDR10) || hevcDecoder != null
+            126 -> types.isNotEmpty() || dvDecoder != null
+            129 -> types.isNotEmpty() || hevcDecoder != null
+            else -> types.isNotEmpty() || dvDecoder != null || hevcDecoder != null
+        }
+        Log.i(
+            TAG,
+            "[DV] supportsHdr qn=$qualityCode displayTypes=[${types.joinToString(",")}] " +
+                "dvDecoder=${dvDecoder ?: "-"} hevcDecoder=${hevcDecoder ?: "-"} -> $supported",
+        )
+        return supported
     }
 
     companion object {
