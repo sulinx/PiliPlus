@@ -46,6 +46,7 @@ class AndroidHdrPlaybackBackend extends PlaybackBackend {
     bool play = false,
     Map<String, String>? headers,
     VideoFitType fit = VideoFitType.contain,
+    bool hdrMode = false,
   }) async {
     _ensureEventSubscription();
     final sessionId = await _channel.invokeMethod<int>('create');
@@ -54,7 +55,10 @@ class AndroidHdrPlaybackBackend extends PlaybackBackend {
     }
     _sessionId = sessionId;
     _instances[sessionId] = this;
-    await _channel.invokeMethod<void>('setHdrMode', {'enabled': true});
+    // 普通 SDR 画质不要请求 HDR 窗口模式：那会把整机输出切成 HDR，画面发灰发白。
+    if (hdrMode) {
+      await _channel.invokeMethod<void>('setHdrMode', {'enabled': true});
+    }
     await _channel.invokeMethod<void>('open', {
       'sessionId': sessionId,
       'videoUrl': dataSource.videoSource,

@@ -75,6 +75,7 @@ abstract class PlaybackBackend {
     bool play = false,
     Map<String, String>? headers,
     VideoFitType fit = VideoFitType.contain,
+    bool hdrMode = false,
   });
 
   Future<void> play();

@@ -77,10 +77,14 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   Player? _videoPlayerController;
   VideoController? _videoController;
 
-  /// 原生 Android Media3(ExoPlayer) 播放后端，非 null 时处于 HDR 原生播放
+  /// 原生 Android Media3(ExoPlayer) 播放后端，非 null 时处于原生播放
   AndroidHdrPlaybackBackend? _androidHdrBackend;
   StreamSubscription<PlaybackBackendEvent>? _backendSubscription;
   bool _androidHdrAudioDisabled = false;
+
+  /// 普通画质的「首帧看门狗」：走原生后端但迟迟不出画面时回退 mpv 一次
+  Timer? _nativeStallTimer;
+  bool _nativeStallGuardFired = false;
 
   static PlPlayerController? _instance;
 
@@ -815,24 +819,30 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       onlyPlayAudio.value ||
       superResolutionType.value != SuperResolutionType.disable;
 
-  /// 当前画质是否属于「走原生后端」的 HDR 画质（不含设备能力探测）
+  /// 是否属于 HDR 画质：杜比视界 126 / HDR Vivid 129 / HDR 真彩 125
+  bool isHdrQuality([int? qualityCode]) =>
+      _hdrQualityCodes.contains(qualityCode ?? currentQualityCode);
+
+  /// 当前源是否交给原生（Media3/ExoPlayer）后端播放。
+  ///
+  /// 按 blbl（cat3399/blbl）的做法：**非直播的所有画质**都走原生后端 ——
+  /// ExoPlayer 的 MediaCodecSelector.DEFAULT 会把软解器排到最后
+  /// （MediaCodecUtil.getDecoderInfosSortedBySoftwareOnly），普通画质同样硬解优先，
+  /// 且 enableDecoderFallback 默认关闭，不会像 mpv 那样静默掉到软解。
+  ///
+  /// 仍然留给 mpv 的只有：mpv 专属能力（超分 / 镜像 / 听视频）与直播。
   bool shouldUseAndroidHdrForCurrentSource([int? qualityCode]) {
-    final targetQuality = qualityCode ?? currentQualityCode;
-    return Platform.isAndroid &&
-        !isLive &&
-        targetQuality != null &&
-        _hdrQualityCodes.contains(targetQuality) &&
-        !_requiresMpvOnlyFeature;
+    return Platform.isAndroid && !isLive && !_requiresMpvOnlyFeature;
   }
 
-  /// 原生后端是否会实际接管该画质（含设备能力探测）：
-  /// HDR 画质默认走原生后端；「强制 HDR」开启时不再探测屏幕能力。
+  /// 原生后端是否会实际接管该画质（含 HDR 画质的设备能力探测）：
+  /// - 普通画质：直接交给 Media3 自己挑（blbl 式不预判），失败会自动回退 mpv；
+  /// - HDR 画质：需要探测设备是否有对应硬解器；「强制 HDR」开启时不再探测。
   Future<bool> willUseAndroidHdrBackend([int? qualityCode]) async {
     final targetQuality = qualityCode ?? currentQualityCode;
     if (!shouldUseAndroidHdrForCurrentSource(qualityCode)) {
       dvLog(
         'skip native: qn=$targetQuality '
-        'isHdrQn=${_hdrQualityCodes.contains(targetQuality)} '
         'android=${Platform.isAndroid} live=$isLive '
         'mpvOnlyFeature=$_requiresMpvOnlyFeature',
       );
@@ -840,6 +850,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
     if (Pref.androidHdrPlayback) {
       dvLog('use native: qn=$targetQuality (强制 HDR 开关已开)');
+      return true;
+    }
+    if (!isHdrQuality(targetQuality)) {
+      dvLog('use native: qn=$targetQuality (普通画质，直接试原生后端)');
       return true;
     }
     final supported = await AndroidHdrPlaybackBackend.supportsHdr(
@@ -855,9 +869,16 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     Volume? volume,
     Duration? duration,
   ) async {
-    if (await willUseAndroidHdrBackend()) {
+    // 本地文件仍交给 mpv：它的格式覆盖面（flv/rmvb/ts/外挂音轨等）比 ExoPlayer 宽。
+    // 原生后端只接管 bilibili 的 DASH 网络流。
+    if (dataSource is NetworkSource &&
+        await willUseAndroidHdrBackend(dataSource.qualityCode)) {
       try {
         await _createAndroidHdrBackend(dataSource, seekTo, duration);
+        if (!isHdrQuality(dataSource.qualityCode)) {
+          // 普通画质没有「必须留在原生后端」的理由：首帧迟迟不来就回退 mpv
+          _armNativeStallGuard(dataSource, seekTo);
+        }
         dvLog('backend = Media3 原生后端');
         return;
       } catch (err, stackTrace) {
@@ -869,6 +890,27 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       dvLog('backend = mpv (media_kit)');
     }
     await _createVideoController(dataSource, seekTo, volume);
+  }
+
+  /// 普通画质走原生后端时的首帧看门狗（15 秒仍无 ready → 回退 mpv）
+  void _armNativeStallGuard(DataSource dataSource, Duration? seekTo) {
+    _nativeStallTimer?.cancel();
+    _nativeStallGuardFired = false;
+    _nativeStallTimer = Timer(const Duration(seconds: 15), () async {
+      _nativeStallTimer = null;
+      if (!isAndroidHdrBackend || _nativeStallGuardFired) return;
+      if (dataStatus.value == DataStatus.loaded && !isBuffering.value) return;
+      _nativeStallGuardFired = true;
+      dvLog('原生后端 15s 未就绪（qn=${dataSource.qualityCode}），回退 mpv');
+      final wasPlaying = playerStatus.isPlaying;
+      await _disposeAndroidHdrBackend();
+      SmartDialog.showToast('已使用兼容播放');
+      await _createVideoController(dataSource, seekTo, null);
+      await _initializePlayer();
+      if (wasPlaying) {
+        await play();
+      }
+    });
   }
 
   Future<void> _createAndroidHdrBackend(
@@ -898,6 +940,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         'Referer': HttpString.baseUrl,
       },
       fit: videoFit.value,
+      // 只有 HDR 画质才请求窗口 colorMode=HDR；
+      // 普通 SDR 内容若也请求 HDR 窗口模式，整机输出会被切到 HDR → 画面发灰发白。
+      hdrMode: isHdrQuality(dataSource.qualityCode),
     );
   }
 
@@ -1301,6 +1346,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     _backendSubscription?.cancel();
     _backendSubscription = backend.events.listen((event) {
       if (event.ready) {
+        _nativeStallTimer?.cancel();
+        _nativeStallTimer = null;
         dataStatus.value = DataStatus.loaded;
         isBuffering.value = false;
       }
@@ -1385,13 +1432,18 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     });
   }
 
-  /// 原生后端报错：先尝试屏蔽音频重试，仍失败则回退 mpv
+  /// 原生后端报错：
+  /// - HDR 画质（杜比视界/HDR Vivid/HDR 真彩）必须留在原生后端，先尝试屏蔽音频重试；
+  /// - 其余（含普通画质）直接回退 mpv —— mpv 的音频兼容性更好，没必要牺牲声音。
   void _handleBackendError(String event) {
     if (!isAndroidHdrBackend) return;
     Future.microtask(() async {
       final seekTo = Duration(milliseconds: positionInMilliseconds);
       final wasPlaying = playerStatus.isPlaying;
-      if (!_androidHdrAudioDisabled && _isAndroidHdrAudioError(event)) {
+      if (isHdrQuality() &&
+          !_androidHdrAudioDisabled &&
+          _isAndroidHdrAudioError(event)) {
+        dvLog('原生后端音频报错，屏蔽音频重试: $event');
         _androidHdrAudioDisabled = true;
         final duration = _backendDuration;
         await _disposeAndroidHdrBackend();
@@ -1402,6 +1454,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         }
         return;
       }
+      dvLog('原生后端报错，回退 mpv: $event');
       await _disposeAndroidHdrBackend();
       SmartDialog.showToast('已使用兼容播放');
       await _createVideoController(dataSource, seekTo, null);
@@ -1451,6 +1504,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
   /// 释放原生后端
   Future<void> _disposeAndroidHdrBackend() async {
+    _nativeStallTimer?.cancel();
+    _nativeStallTimer = null;
     _backendSubscription?.cancel();
     _backendSubscription = null;
     final backend = _androidHdrBackend;

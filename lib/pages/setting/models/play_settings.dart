@@ -61,7 +61,7 @@ List<SettingsModel> get playSettings => [
   if (Platform.isAndroid)
     const SwitchModel(
       title: '强制 HDR',
-      subtitle: '无论设备是否支持，对于 HDR 画质，强制调用 HDR 后端播放',
+      subtitle: 'HDR 画质在探测不到设备支持时也强制走原生内核（普通画质一律走原生内核）',
       leading: Icon(Icons.hdr_on_outlined),
       setKey: SettingBoxKey.androidHdrPlayback,
       defaultVal: false,

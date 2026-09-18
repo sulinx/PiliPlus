@@ -971,9 +971,13 @@ class VideoDetailController extends GetxController
       AudioItem? firstAudio;
       final audioList = data.dash?.audio;
       if (audioList != null && audioList.isNotEmpty) {
-        // 原生 HDR 后端对高码率/Dolby 音轨兼容性差：仅在实际会走原生后端时才改用兼容音轨
-        final useAndroidHdrAudioCompat = await plPlayerController
-            .willUseAndroidHdrBackend(currentVideoQa.value?.code);
+        // 原生后端对高码率/Dolby 音轨兼容性差：**仅 HDR 画质**实际走原生后端时才改用兼容音轨；
+        // 普通画质保留用户的音轨偏好（Media3 播不了会整体回退 mpv，而不是牺牲声音）。
+        final useAndroidHdrAudioCompat =
+            plPlayerController.isHdrQuality(currentVideoQa.value?.code) &&
+            await plPlayerController.willUseAndroidHdrBackend(
+              currentVideoQa.value?.code,
+            );
         final effectiveAudioList = useAndroidHdrAudioCompat
             ? audioList
                   .where(
