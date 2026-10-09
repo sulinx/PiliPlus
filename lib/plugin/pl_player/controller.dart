@@ -1512,7 +1512,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       }
       if (event.buffering case final eventBuffering?) {
         isBuffering.value = eventBuffering;
-        _updatePlaybackState(position: _backendPosition);
+        _updatePlaybackState();
       }
       if (event.width case final eventWidth? when eventWidth > 0) {
         width = eventWidth;

@@ -1,4 +1,5 @@
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 import 'package:material_ui/material_ui.dart';
 
 class PlayOrPauseButton extends StatefulWidget {
