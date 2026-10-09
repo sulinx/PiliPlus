@@ -73,11 +73,11 @@ jobs:
               with:
                   archive: false
                   name: Android_arm64-v8a
-                  path: PiliPlus_android_*_arm64-v8a.apk
+                  path: PiliPlus_android_${{ env.version }}_arm64-v8a.apk
 
             - name: 上传 v7a
               uses: actions/upload-artifact@v7
               with:
                   archive: false
                   name: Android_armeabi-v7a
-                  path: PiliPlus_android_*_armeabi-v7a.apk
+                  path: PiliPlus_android_${{ env.version }}_armeabi-v7a.apk
