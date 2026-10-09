@@ -1,7 +1,4 @@
-import 'dart:async';
-
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
-import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 import 'package:material_ui/material_ui.dart';
 
 class PlayOrPauseButton extends StatefulWidget {
@@ -19,7 +16,7 @@ class PlayOrPauseButton extends StatefulWidget {
 class PlayOrPauseButtonState extends State<PlayOrPauseButton>
     with SingleTickerProviderStateMixin {
   late final AnimationController controller;
-  StreamSubscription? subscription;
+  late final void Function(PlayerStatus) _statusListener;
 
   @override
   void initState() {
@@ -29,18 +26,19 @@ class PlayOrPauseButtonState extends State<PlayOrPauseButton>
       value: widget.plPlayerController.playerStatus.isPlaying ? 1 : 0,
       duration: const Duration(milliseconds: 200),
     );
-    subscription = widget.plPlayerController.playerStatus.listen((status) {
+    _statusListener = (status) {
       if (status == PlayerStatus.playing) {
         controller.forward();
       } else {
         controller.reverse();
       }
-    });
+    };
+    widget.plPlayerController.addStatusLister(_statusListener);
   }
 
   @override
   void dispose() {
-    subscription?.cancel();
+    widget.plPlayerController.removeStatusLister(_statusListener);
     controller.dispose();
     super.dispose();
   }
