@@ -992,6 +992,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     Duration? seekTo,
     Volume? volume,
     Duration? duration,
+    int? rotate,
   ) async {
     // 本地文件仍交给 mpv：它的格式覆盖面（flv/rmvb/ts/外挂音轨等）比 ExoPlayer 宽。
     // 原生后端只接管 bilibili 的 DASH 网络流。
@@ -1013,7 +1014,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     } else {
       dvLog('backend = mpv (media_kit)');
     }
-    await _createVideoController(dataSource, seekTo, volume, _pendingRotate);
+    await _createVideoController(dataSource, seekTo, volume, rotate);
   }
 
   /// 普通画质走原生后端时的首帧看门狗（15 秒仍无 ready → 回退 mpv）
